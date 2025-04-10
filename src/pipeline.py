@@ -1,22 +1,25 @@
 import logging
 import re
 import string
-from typing import Dict, Any, Optional
+import time
+from typing import Dict, Any, Optional, Callable
 
 from src.extractors.youtube import YouTubeExtractor
 from src.summarizers.summarizer import Summarizer
 from src.notion.manager import NotionManager
-from src.config import DEFAULT_MODEL, AVAILABLE_MODELS
+from src.config import DEFAULT_MODEL, AVAILABLE_MODELS, DEFAULT_LANGUAGE
 
 
 class YouTubeToNotionPipeline:
     """Main pipeline class that orchestrates the entire process."""
     
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: Optional[str] = None, language: Optional[str] = None, progress_callback: Optional[Callable[[str, float], None]] = None):
         """Initialize the pipeline with all necessary components.
         
         Args:
             model: The AI model to use for summarization. If None, uses default model.
+            language: The language code for transcript extraction. If None, uses default language.
+            progress_callback: Optional callback function to report progress (message, percentage)
         """
         # Set up logging
         logging.basicConfig(
@@ -25,14 +28,26 @@ class YouTubeToNotionPipeline:
         )
         self.logger = logging.getLogger(__name__)
         
+        # Progress tracking
+        self.progress_callback = progress_callback
+        
         # Use provided model or default
         self.model = model if model and model in AVAILABLE_MODELS else DEFAULT_MODEL
         self.logger.info(f"Using model: {self.model}")
+        
+        # Set language for transcript
+        self.language = language or DEFAULT_LANGUAGE
         
         # Initialize components
         self.youtube_extractor = YouTubeExtractor()
         self.summarizer = Summarizer(model=self.model)
         self.notion_manager = NotionManager()
+    
+    def _report_progress(self, message: str, percentage: float) -> None:
+        """Report progress through callback if available and log it."""
+        self.logger.info(f"Progress ({percentage:.0f}%): {message}")
+        if self.progress_callback:
+            self.progress_callback(message, percentage)
     
     def _validate_url(self, url: str) -> None:
         """Validate that the URL is a proper YouTube URL."""
@@ -158,24 +173,38 @@ class YouTubeToNotionPipeline:
     
     def process(self, url: str) -> Dict[str, Any]:
         """Process a YouTube URL through the entire pipeline."""
+        start_time = time.time()
         try:
             # Validate URL
             self._validate_url(url)
-            self.logger.info(f"Processing YouTube URL: {url}")
+            self._report_progress(f"Processing YouTube URL: {url}", 5)
             
             # Step 1: Extract content from YouTube
-            self.logger.info("Extracting transcript from YouTube...")
-            content = self.youtube_extractor.get_content(url)
+            self._report_progress("Fetching video metadata and transcript...", 10)
+            content = self.youtube_extractor.get_content(url, self.language)
             
             if not content.get('transcript'):
                 raise ValueError("Failed to extract transcript from the video")
             
+            transcript_length = len(content.get('transcript', ''))
+            self._report_progress(
+                f"Extracted transcript ({transcript_length} characters). "
+                f"Video duration: {content.get('duration_str', 'unknown')}",
+                30
+            )
+            
             # Step 2: Summarize the content
-            self.logger.info(f"Summarizing content with model: {self.model}...")
+            self._report_progress(f"Generating summary with {self.model}... (this may take a while for longer videos)", 40)
             content = self.summarizer.summarize(content)
             
             if not content.get('summary'):
                 raise ValueError("Failed to generate summary")
+            
+            summary_length = len(content.get('summary', ''))
+            self._report_progress(
+                f"Summary generated ({summary_length} characters)",
+                70
+            )
             
             # If the title from YouTube metadata isn't a generic one, use it directly
             # Otherwise, try to extract a better title from the summary
@@ -192,10 +221,14 @@ class YouTubeToNotionPipeline:
                 content['title'] = extracted_title
             
             # Step 3: Add to Notion database
-            self.logger.info("Adding to Notion database...")
+            self._report_progress("Adding to Notion database...", 80)
             result = self.notion_manager.add_to_database(content)
             
-            self.logger.info(f"Successfully processed video: {content.get('title')}")
+            elapsed_time = time.time() - start_time
+            self._report_progress(
+                f"Successfully processed video: {content.get('title')} in {elapsed_time:.1f} seconds", 
+                100
+            )
             
             return result
             

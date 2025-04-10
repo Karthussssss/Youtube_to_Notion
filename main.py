@@ -1,9 +1,10 @@
 import sys
 import os
+import argparse
 from dotenv import load_dotenv
 
 from src.pipeline import YouTubeToNotionPipeline
-from src.config import AVAILABLE_MODELS
+from src.config import AVAILABLE_MODELS, DEFAULT_LANGUAGE
 
 
 def setup_environment():
@@ -68,52 +69,128 @@ def select_model():
         return "gpt-4o-mini"
 
 
-def main():
-    """Main entry point for the application."""
-    # Set up environment
-    setup_environment()
-    
-    # Select AI model
-    model = select_model()
-    
-    # Prompt user for YouTube URL
-    url = get_youtube_url()
-    
-    if not url.strip():
-        print("\nError: No URL provided.")
+def parse_arguments():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="YouTube to Notion Pipeline")
+    parser.add_argument("--url", type=str, help="YouTube URL to process")
+    parser.add_argument("--model", type=str, choices=list(AVAILABLE_MODELS.keys()), 
+                        help="AI model to use for summarization")
+    parser.add_argument("--input-file", type=str, 
+                        help="Path to a file containing YouTube URLs (one per line)")
+    parser.add_argument("--batch", action="store_true", 
+                        help="Process multiple YouTube URLs in batch mode")
+    parser.add_argument("--language", type=str, 
+                        help="Language code for transcript (e.g., en, es, fr, auto)")
+    return parser.parse_args()
+
+
+def read_urls_from_file(file_path):
+    """Read YouTube URLs from a file."""
+    if not os.path.exists(file_path):
+        print(f"Error: File not found: {file_path}")
         sys.exit(1)
     
-    # Create and run the pipeline
-    pipeline = YouTubeToNotionPipeline(model=model)
-    
+    try:
+        with open(file_path, 'r') as file:
+            urls = [line.strip() for line in file if line.strip()]
+        return urls
+    except Exception as e:
+        print(f"Error reading file: {e}")
+        sys.exit(1)
+
+
+def process_url(url, model, language=None, pipeline=None):
+    """Process a single YouTube URL."""
+    if not pipeline:
+        pipeline = YouTubeToNotionPipeline(model=model, language=language)
+        
     try:
         print(f"\nProcessing: {url}")
-        # Process the URL
         result = pipeline.process(url)
         
-        # Print success message
-        print("\nSuccess! Video processed and added to Notion.")
+        print("\n✅ Success! Video processed and added to Notion.")
         print(f"Title: {result.get('title', 'Unknown')}")
         print(f"Notion URL: {result.get('notion_url', 'Unknown')}")
+        return True, result
         
     except Exception as e:
         error_message = str(e)
-        print(f"\nError: {error_message}")
+        print(f"\n❌ Error: {error_message}")
         
         # Provide more helpful messages for common errors
         if "No transcript available" in error_message or "TranscriptsDisabled" in error_message:
             print("\nThis video doesn't have captions or transcripts available.")
             print("The application only works with videos that have captions enabled.")
-            print("Try another video that has captions or subtitles available.")
-        elif "Could not find database with ID" in error_message:
-            print("\nCouldn't find your Notion database. Please check:")
-            print("1. Your NOTION_DATABASE_ID in the .env file is correct")
-            print("2. You've shared the database with your integration")
-            print("3. The database ID format includes dashes in the correct positions")
-        elif "authentication" in error_message.lower() or "unauthorized" in error_message.lower():
-            print("\nAPI authentication failed. Please check your API keys in the .env file.")
+        elif "Could not extract video ID" in error_message:
+            print("\nInvalid YouTube URL format.")
         
-        sys.exit(1)
+        return False, {"error": error_message, "url": url}
+
+
+def main():
+    """Main entry point for the application."""
+    # Set up environment
+    setup_environment()
+    
+    # Parse command-line arguments
+    args = parse_arguments()
+    
+    # Get model (from args or user input)
+    model = args.model if args.model else select_model()
+    
+    # Get language (from args or use default)
+    language = args.language if args.language else DEFAULT_LANGUAGE
+    
+    # Initialize pipeline once for batch processing
+    pipeline = YouTubeToNotionPipeline(model=model, language=language)
+    
+    # Determine the mode and get URLs
+    if args.input_file:
+        # Batch processing from file
+        urls = read_urls_from_file(args.input_file)
+        if not urls:
+            print("Error: No valid URLs found in the input file.")
+            sys.exit(1)
+            
+        print(f"\nBatch processing {len(urls)} YouTube URLs...")
+        
+        # Process all URLs
+        results = {
+            "success": [],
+            "failures": []
+        }
+        
+        for i, url in enumerate(urls):
+            print(f"\n[{i+1}/{len(urls)}] Processing URL: {url}")
+            success, result = process_url(url, model, language, pipeline)
+            if success:
+                results["success"].append(result)
+            else:
+                results["failures"].append(result)
+        
+        # Show summary of results
+        print("\n=== Batch Processing Summary ===")
+        print(f"Total URLs processed: {len(urls)}")
+        print(f"Successful: {len(results['success'])}")
+        print(f"Failed: {len(results['failures'])}")
+        
+        if results["failures"]:
+            print("\nFailed URLs:")
+            for failure in results["failures"]:
+                print(f"- {failure['url']}: {failure['error']}")
+        
+    elif args.url:
+        # Single URL from command line
+        process_url(args.url, model, language, pipeline)
+    else:
+        # Interactive mode
+        url = get_youtube_url()
+        
+        if not url.strip():
+            print("\nError: No URL provided.")
+            sys.exit(1)
+        
+        process_url(url, model, language, pipeline)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@ A modular Python application that takes a YouTube link, extracts content via tra
 - Properly formats markdown including bold text and headings that display beautifully in Notion
 - Integrates with Notion to store video summaries and metadata in a database
 - Modular design with object-oriented programming principles
+- **NEW: Batch processing** - Process multiple YouTube videos at once
+- **NEW: Command-line arguments** for flexible usage
 
 ## Installation
 
@@ -62,7 +64,9 @@ A modular Python application that takes a YouTube link, extracts content via tra
 
 ## Usage
 
-Run the application and follow the prompts:
+### Interactive Mode
+
+Run the application without arguments to use the interactive mode:
 
 ```
 python main.py
@@ -77,7 +81,29 @@ The application will:
 6. Add the summary and metadata to your Notion database
 7. Provide a link to the created Notion page
 
-Note: Only videos with available captions are supported. The application will not work for videos without captions or transcripts.
+### Command Line Arguments
+
+You can also use command line arguments for more flexible usage:
+
+```
+python main.py --url "https://www.youtube.com/watch?v=VIDEO_ID" --model "gpt-4o-mini"
+```
+
+Available arguments:
+- `--url`: YouTube URL to process
+- `--model`: AI model to use (gpt-4o, gpt-4o-mini, o1, o3-mini)
+- `--input-file`: Path to a file containing YouTube URLs (one per line)
+- `--batch`: Process multiple YouTube URLs in batch mode
+
+### Batch Processing
+
+Process multiple videos at once by providing a file with one URL per line:
+
+```
+python main.py --input-file urls.txt --model "gpt-4o-mini"
+```
+
+Note: Only videos with available captions are supported. The application will try to use the available transcripts for the video.
 
 ## Available AI Models
 
@@ -131,7 +157,6 @@ youtube-to-notion/
 
 ## Future Enhancements
 
-- Batch processing of multiple YouTube videos
 - Support for additional video platforms
 - Web interface for easier interaction
 - Caching to avoid redundant processing

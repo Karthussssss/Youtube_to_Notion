@@ -1,5 +1,6 @@
 import textwrap
 import os
+import time
 from typing import List, Dict, Any, Optional
 
 from src.config import (
@@ -69,36 +70,76 @@ class Summarizer:
             "user": user_prompt
         }
     
-    def summarize_with_openai(self, text: str) -> str:
-        """Summarize text using OpenAI's API."""
+    def summarize_with_openai(self, text: str, max_retries: int = 3, retry_delay: float = 2.0) -> str:
+        """Summarize text using OpenAI's API with retry mechanism.
+        
+        Args:
+            text: The text to summarize
+            max_retries: Maximum number of retry attempts
+            retry_delay: Initial delay between retries in seconds, doubles after each retry
+            
+        Returns:
+            Summarized text
+            
+        Raises:
+            ValueError: If OpenAI API key is not found
+            Exception: If all retry attempts fail
+        """
         try:
             import openai
+            from openai import RateLimitError, APIError, APIConnectionError, Timeout
             
             if not OPENAI_API_KEY:
                 raise ValueError("OpenAI API key not found. Check your .env file.")
             
             client = openai.OpenAI(api_key=OPENAI_API_KEY)
-            
             prompts = self._get_prompt_template()
             
-            # Call the OpenAI API with the chat completions endpoint
-            response = client.chat.completions.create(
-                model=self.model_id,
-                messages=[
-                    {"role": "system", "content": prompts["system"]},
-                    {"role": "user", "content": prompts["user"].format(text=text)}
-                ],
-                max_tokens=MAX_SUMMARY_LENGTH,
-                temperature=0.3,  # Lower temperature for more focused output
-            )
+            # Set up message structure outside retry loop
+            messages = [
+                {"role": "system", "content": prompts["system"]},
+                {"role": "user", "content": prompts["user"].format(text=text)}
+            ]
             
-            return response.choices[0].message.content.strip()
+            # Retry logic for handling rate limits and transient errors
+            attempt = 0
+            current_delay = retry_delay
+            last_error = None
+            
+            while attempt < max_retries:
+                try:
+                    # Call the OpenAI API with the chat completions endpoint
+                    response = client.chat.completions.create(
+                        model=self.model_id,
+                        messages=messages,
+                        max_tokens=MAX_SUMMARY_LENGTH,
+                        temperature=0.3,  # Lower temperature for more focused output
+                    )
+                    
+                    return response.choices[0].message.content.strip()
+                    
+                except (RateLimitError, APIError, APIConnectionError, Timeout) as e:
+                    attempt += 1
+                    last_error = e
+                    
+                    if attempt < max_retries:
+                        print(f"OpenAI API error: {e}. Retrying in {current_delay:.1f} seconds... (Attempt {attempt}/{max_retries})")
+                        time.sleep(current_delay)
+                        current_delay *= 2  # Exponential backoff
+                    else:
+                        print(f"Maximum retry attempts reached. Last error: {e}")
+                        raise
+                
+                except Exception as e:
+                    # Don't retry for other exceptions
+                    print(f"Unexpected error using OpenAI API: {e}")
+                    raise
+            
+            # If we've exhausted retries
+            raise last_error
             
         except ImportError:
             raise ImportError("OpenAI package is required. Please install it with: pip install openai")
-        except Exception as e:
-            print(f"Error using OpenAI API: {e}")
-            raise
     
     def summarize(self, content: Dict[str, Any]) -> Dict[str, Any]:
         """Main method to summarize content."""
@@ -107,8 +148,31 @@ class Summarizer:
         
         text = content['transcript']
         
-        # Summarize using OpenAI
-        summary = self.summarize_with_openai(text)
+        # Handle very long transcripts by summarizing in chunks if needed
+        if len(text) > 25000:  # If transcript is extremely long (>25K chars)
+            print(f"Transcript is very long ({len(text)} chars). Processing in chunks...")
+            chunks = self._chunk_text(text, max_chunk_size=25000)
+            
+            # Summarize each chunk
+            chunk_summaries = []
+            for i, chunk in enumerate(chunks):
+                print(f"Summarizing chunk {i+1}/{len(chunks)}...")
+                chunk_summary = self.summarize_with_openai(chunk)
+                chunk_summaries.append(chunk_summary)
+            
+            # Combine chunk summaries and create a final summary
+            if len(chunk_summaries) > 1:
+                combined_summary = "\n\n".join(chunk_summaries)
+                # Create a meta-summary for very long content
+                summary = self.summarize_with_openai(
+                    f"This is a collection of summaries from different parts of a long transcript. "
+                    f"Please create a cohesive summary that combines all these sections:\n\n{combined_summary}"
+                )
+            else:
+                summary = chunk_summaries[0]
+        else:
+            # For normal length transcripts, summarize directly
+            summary = self.summarize_with_openai(text)
         
         # Add the summary to the content dictionary
         content['summary'] = summary
