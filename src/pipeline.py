@@ -6,13 +6,18 @@ from typing import Dict, Any, Optional
 from src.extractors.youtube import YouTubeExtractor
 from src.summarizers.summarizer import Summarizer
 from src.notion.manager import NotionManager
+from src.config import DEFAULT_MODEL, AVAILABLE_MODELS
 
 
 class YouTubeToNotionPipeline:
     """Main pipeline class that orchestrates the entire process."""
     
-    def __init__(self, use_openai: Optional[bool] = None):
-        """Initialize the pipeline with all necessary components."""
+    def __init__(self, model: Optional[str] = None):
+        """Initialize the pipeline with all necessary components.
+        
+        Args:
+            model: The AI model to use for summarization. If None, uses default model.
+        """
         # Set up logging
         logging.basicConfig(
             level=logging.INFO,
@@ -20,9 +25,13 @@ class YouTubeToNotionPipeline:
         )
         self.logger = logging.getLogger(__name__)
         
+        # Use provided model or default
+        self.model = model if model and model in AVAILABLE_MODELS else DEFAULT_MODEL
+        self.logger.info(f"Using model: {self.model}")
+        
         # Initialize components
         self.youtube_extractor = YouTubeExtractor()
-        self.summarizer = Summarizer() # Always uses OpenAI now
+        self.summarizer = Summarizer(model=self.model)
         self.notion_manager = NotionManager()
     
     def _validate_url(self, url: str) -> None:
@@ -162,7 +171,7 @@ class YouTubeToNotionPipeline:
                 raise ValueError("Failed to extract transcript from the video")
             
             # Step 2: Summarize the content
-            self.logger.info("Summarizing content with OpenAI...")
+            self.logger.info(f"Summarizing content with model: {self.model}...")
             content = self.summarizer.summarize(content)
             
             if not content.get('summary'):

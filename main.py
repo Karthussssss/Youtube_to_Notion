@@ -3,6 +3,7 @@ import os
 from dotenv import load_dotenv
 
 from src.pipeline import YouTubeToNotionPipeline
+from src.config import AVAILABLE_MODELS
 
 
 def setup_environment():
@@ -31,10 +32,49 @@ def get_youtube_url():
     return input("\nEnter a YouTube URL: ")
 
 
+def select_model():
+    """Prompt the user to select an AI model for summarization."""
+    print("\nSelect AI Model for Summarization:")
+    print("----------------------------------")
+    
+    models = {
+        "1": {"name": "GPT-4o", "id": "gpt-4o", "description": "OpenAI's most capable model (balanced quality/speed)"},
+        "2": {"name": "GPT-4o-mini", "id": "gpt-4o-mini", "description": "Faster, more affordable GPT model (default)"},
+        "3": {"name": "O1", "id": "o1", "description": "OpenAI's advanced vision-language model (highest quality)"},
+        "4": {"name": "O3-mini", "id": "o3-mini", "description": "Fast, efficient version of O1 (good balance)"}
+    }
+    
+    # Display options
+    for key, model in models.items():
+        print(f"{key}. {model['name']} - {model['description']}")
+    
+    # Default to GPT-4o-mini
+    print("\nPress Enter to use the default (GPT-4o-mini)")
+    
+    # Get user choice
+    choice = input("\nSelect model (1-4): ").strip()
+    
+    # Use default if no input
+    if not choice:
+        choice = "2"  # Default to GPT-4o-mini
+    
+    # Validate choice and return model
+    if choice in models:
+        selected_model = models[choice]
+        print(f"\nSelected: {selected_model['name']}")
+        return selected_model["id"]
+    else:
+        print("\nInvalid selection. Using default model (GPT-4o-mini).")
+        return "gpt-4o-mini"
+
+
 def main():
     """Main entry point for the application."""
     # Set up environment
     setup_environment()
+    
+    # Select AI model
+    model = select_model()
     
     # Prompt user for YouTube URL
     url = get_youtube_url()
@@ -44,7 +84,7 @@ def main():
         sys.exit(1)
     
     # Create and run the pipeline
-    pipeline = YouTubeToNotionPipeline()
+    pipeline = YouTubeToNotionPipeline(model=model)
     
     try:
         print(f"\nProcessing: {url}")
